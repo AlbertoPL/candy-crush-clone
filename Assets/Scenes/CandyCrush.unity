@@ -527,15 +527,45 @@ PrefabInstance:
       propertyPath: m_IsActive
       value: 1
       objectReference: {fileID: 0}
+    - target: {fileID: 3032250561953991518, guid: 7eda362bd03214bc8a24898e0c680347,
+        type: 3}
+      propertyPath: m_PreserveAspect
+      value: 0
+      objectReference: {fileID: 0}
     - target: {fileID: 3032250563437662083, guid: 7eda362bd03214bc8a24898e0c680347,
         type: 3}
       propertyPath: m_IsActive
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 3032250563437662084, guid: 7eda362bd03214bc8a24898e0c680347,
+        type: 3}
+      propertyPath: m_AnchoredPosition.y
       value: 0
       objectReference: {fileID: 0}
     - target: {fileID: 3032250563677591410, guid: 7eda362bd03214bc8a24898e0c680347,
         type: 3}
       propertyPath: m_Name
       value: GameMenu
+      objectReference: {fileID: 0}
+    - target: {fileID: 3032250563677591412, guid: 7eda362bd03214bc8a24898e0c680347,
+        type: 3}
+      propertyPath: m_UiScaleMode
+      value: 1
+      objectReference: {fileID: 0}
+    - target: {fileID: 3032250563677591412, guid: 7eda362bd03214bc8a24898e0c680347,
+        type: 3}
+      propertyPath: m_ReferenceResolution.x
+      value: 1920
+      objectReference: {fileID: 0}
+    - target: {fileID: 3032250563677591412, guid: 7eda362bd03214bc8a24898e0c680347,
+        type: 3}
+      propertyPath: m_ReferenceResolution.y
+      value: 1080
+      objectReference: {fileID: 0}
+    - target: {fileID: 3032250563677591412, guid: 7eda362bd03214bc8a24898e0c680347,
+        type: 3}
+      propertyPath: m_ReferencePixelsPerUnit
+      value: 100
       objectReference: {fileID: 0}
     - target: {fileID: 3032250563677591414, guid: 7eda362bd03214bc8a24898e0c680347,
         type: 3}
