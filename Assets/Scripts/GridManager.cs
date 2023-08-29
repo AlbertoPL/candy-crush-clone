@@ -1,7 +1,10 @@
 using System.Collections;
 using System.Collections.Generic;
 using TMPro;
+using Unity.Services.Analytics;
+using UnityEditor.Tilemaps;
 using UnityEngine;
+using UnityEngine.UIElements;
 
 public class GridManager : MonoBehaviour
 {
@@ -118,6 +121,29 @@ public class GridManager : MonoBehaviour
         return renderer;
     }
 
+    Rigidbody2D GetRigidBodyAt(int column, int row)
+    {
+        if (column < 0 || column >= gridDimension
+             || row < 0 || row >= gridDimension)
+        {
+            return null;
+        }
+        GameObject tile = grid[column, row];
+        Rigidbody2D rigidBody = tile.GetComponent<Rigidbody2D>();
+        return rigidBody;
+    }
+
+    Tile GetTileAt(int column, int row)
+    {
+        if (column < 0 || column >= gridDimension
+             || row < 0 || row >= gridDimension)
+        {
+            return null;
+        }
+        GameObject tile = grid[column, row];
+        return tile.GetComponent<Tile>();
+    }
+
     public void SwapTiles(Vector2 tile1Position, Vector2 tile2Position)
     {
         GameObject tile1 = grid[(int) tile1Position.x, (int) tile1Position.y];
@@ -126,9 +152,6 @@ public class GridManager : MonoBehaviour
         GameObject tile2 = grid[(int) tile2Position.x, (int) tile2Position.y];
         SpriteRenderer renderer2 = tile2.GetComponent<SpriteRenderer>();
 
-        //Sprite temp = renderer1.sprite;
-        //renderer1.sprite = renderer2.sprite;
-        //renderer2.sprite = temp;
         StartCoroutine(SmoothTileSwap(renderer1, renderer2, 0.5f));
     }
 
@@ -171,7 +194,7 @@ public class GridManager : MonoBehaviour
                 numMoves--;
                 do
                 {
-                    FillHoles();
+                    yield return StartCoroutine(FillHolesSlowly(0.5f));
                 } while (CheckMatches());
                 if (numMoves <= 0)
                 {
@@ -250,18 +273,113 @@ public class GridManager : MonoBehaviour
     {
         for (int column = 0; column < gridDimension; column++)
         {
-            for (int row = 0; row < gridDimension; row++) // 1
+            for (int row = 0; row < gridDimension; row++)
             {
-                while (GetSpriteRendererAt(column, row).sprite == null) // 2
+                while (GetSpriteRendererAt(column, row).sprite == null)
                 {
-                    for (int filler = row; filler < gridDimension - 1; filler++) // 3
+                    for (int filler = row; filler < gridDimension - 1; filler++)
                     {
-                        SpriteRenderer current = GetSpriteRendererAt(column, filler); // 4
+                        //Tile currentRigid = GetTileAt(column, filler);
+                        SpriteRenderer current = GetSpriteRendererAt(column, filler);
+                        //Tile nextRigid = GetTileAt(column, filler);
+                        SpriteRenderer next = GetSpriteRendererAt(column, filler + 1);
+                        //currentRigid.isFalling = true;
+                        //nextRigid.isFalling = true;
+                        current.sprite = next.sprite;
+                    }
+                    SpriteRenderer last = GetSpriteRendererAt(column, gridDimension - 1);
+                    last.sprite = sprites[Random.Range(0, sprites.Count)];
+                }
+            }
+        }
+    }
+
+    IEnumerator FillHolesSlowly(float time)
+    {
+        float elapsedTime = 0;
+
+        List<int> columnsWithHoles = new List<int>();
+        List<int> rowToStartOn = new List<int>();
+        List<int> firstPositionOfHole = new List<int>();
+
+        for (int column = 0; column < gridDimension; column++)
+        {
+            for (int row = 0; row < gridDimension; row++)
+            {
+                if (GetSpriteRendererAt(column, row).sprite == null)
+                {
+                    if (columnsWithHoles.Contains(column))
+                    {
+                        rowToStartOn[columnsWithHoles.IndexOf(column)] = row + 1;
+                    }
+                    else
+                    {
+                        columnsWithHoles.Add(column);
+                        firstPositionOfHole.Add(row);
+                        rowToStartOn.Add(row + 1);
+                    }
+                }
+            }
+        }
+
+        //apply a force on all columns as needed, then elapse time until positions have reached the right place
+        List<Rigidbody2D> topItems = new List<Rigidbody2D>();
+        List<Vector3> finalPosition = new List<Vector3>();
+        
+        for (int x = 0; x < columnsWithHoles.Count; x++)
+        {
+            /*for (int row = rowToStartOn[x]; row < gridDimension; row++)
+            {
+                Vector2 tilePos = GetSpriteRendererAt(columnsWithHoles[x], row).transform.position;
+                GetSpriteRendererAt(columnsWithHoles[x], row).transform.position += (Vector3) Vector2.down * Time.deltaTime;
+            }*/
+            int currentItemRow = rowToStartOn[x];
+            if (currentItemRow < gridDimension)
+            {
+                Rigidbody2D topItemInColumn = GetRigidBodyAt(columnsWithHoles[x], gridDimension - 1); //get the very top most item, not the first item above the hole
+                if (topItemInColumn != null)
+                {
+                    topItemInColumn.AddForce(Vector2.down * 10f, ForceMode2D.Impulse); // only apply a force if there are items above a hole, otherwise no movement in the column
+                    topItems.Add(topItemInColumn);
+                    finalPosition.Add(GetSpriteRendererAt(columnsWithHoles[x], firstPositionOfHole[x]).transform.position);
+                }
+            }
+        }
+
+        while (elapsedTime < time)
+        {
+            Debug.Log("Elapsed time: " + elapsedTime);
+            Debug.Log("TOP items: " + topItems.Count);
+            for (int x = 0; x < topItems.Count; ++x)
+            {
+                //stop movement if we reach the finalPosition
+                Debug.Log("X: " + x);
+                Debug.Log("Item pos: " + topItems[x].transform.position.y);
+                Debug.Log("Final pos: " + finalPosition[x].y);
+                if (topItems[x].transform.position.y <= finalPosition[x].y && topItems[x].velocity.y > 0)
+                {
+                    topItems[x].velocity = Vector2.zero;
+                    topItems[x].transform.position = finalPosition[x];
+                }
+            }
+            elapsedTime += Time.deltaTime;
+            yield return null;
+        }
+
+        for (int column = 0; column < gridDimension; column++)
+        {
+            for (int row = 0; row < gridDimension; row++)
+            {
+                while (GetSpriteRendererAt(column, row).sprite == null)
+                {
+                    for (int filler = row; filler < gridDimension - 1; filler++)
+                    {
+                        SpriteRenderer current = GetSpriteRendererAt(column, filler);
                         SpriteRenderer next = GetSpriteRendererAt(column, filler + 1);
                         current.sprite = next.sprite;
                     }
                     SpriteRenderer last = GetSpriteRendererAt(column, gridDimension - 1);
-                    last.sprite = sprites[Random.Range(0, sprites.Count)]; // 5
+                    last.sprite = sprites[Random.Range(0, sprites.Count)];
                 }
             }
         }
