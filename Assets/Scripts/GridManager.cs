@@ -3,11 +3,14 @@ using System.Collections.Generic;
 using TMPro;
 using Unity.Services.Analytics;
 using UnityEditor.Tilemaps;
+using UnityEditorInternal.VersionControl;
 using UnityEngine;
 using UnityEngine.UIElements;
+using System.Linq;
 
 public class GridManager : MonoBehaviour
 {
+    public static int UNCOLLIDABLE = 6;
     public List<Sprite> sprites;
     public GameObject tilePrefab;
     public int gridDimension;
@@ -97,6 +100,7 @@ public class GridManager : MonoBehaviour
                 }
 
                 GameObject newTile = Instantiate(tilePrefab);
+                newTile.layer = UNCOLLIDABLE; // all new tiles go into layer 6 (UNCOLLIDABLE), as we will need this later to deal with physics
                 SpriteRenderer renderer = newTile.GetComponent<SpriteRenderer>();
                 renderer.sprite = possibleSprites[Random.Range(0, possibleSprites.Count)];
                 Tile tile = newTile.AddComponent<Tile>();
@@ -157,6 +161,7 @@ public class GridManager : MonoBehaviour
 
     private IEnumerator SmoothTileSwap(SpriteRenderer tile1, SpriteRenderer tile2, float time)
     {
+        Debug.Log("Smooth tile swap running");
         isInputDisabled = true;
         Vector2 tile1Pos = tile1.transform.position;
         Vector2 tile2Pos = tile2.transform.position;
@@ -179,6 +184,7 @@ public class GridManager : MonoBehaviour
             tile2.sprite = temp;
             tile1.transform.position = tile1Pos;
             tile2.transform.position = tile2Pos;
+            Debug.Log("Hey hey hey heeeey");
             bool changesOccur = CheckMatches();
             if (!changesOccur)
             {
@@ -187,22 +193,24 @@ public class GridManager : MonoBehaviour
                 tile1.sprite = tile2.sprite;
                 tile2.sprite = temp;
                 SoundManager.Instance.PlaySound(SoundType.TypeNoMatch);
+                isInputDisabled = false;
             }
             else
             {
                 SoundManager.Instance.PlaySound(SoundType.TypePop);
                 numMoves--;
+                RemovePhysicsConstraint();
+                /*FillHolesSlowly(2f);
                 do
                 {
-                    yield return StartCoroutine(FillHolesSlowly(0.5f));
+                    Debug.Log("We're done!");
                 } while (CheckMatches());
                 if (numMoves <= 0)
                 {
                     numMoves = 0;
                     GameOver();
-                }
+                }*/
             }
-            isInputDisabled = false;
         }
     }
 
@@ -223,6 +231,7 @@ public class GridManager : MonoBehaviour
                 }
 
                 List<SpriteRenderer> verticalMatches = FindRowMatchForTile(column, row, current.sprite);
+
                 if (verticalMatches.Count >= 2)
                 {
                     matchedTiles.UnionWith(verticalMatches);
@@ -253,7 +262,6 @@ public class GridManager : MonoBehaviour
         }
         return result;
     }
-
     List<SpriteRenderer> FindRowMatchForTile(int col, int row, Sprite sprite)
     {
         List<SpriteRenderer> result = new List<SpriteRenderer>();
@@ -268,7 +276,6 @@ public class GridManager : MonoBehaviour
         }
         return result;
     }
-
     void FillHoles()
     {
         for (int column = 0; column < gridDimension; column++)
@@ -294,12 +301,93 @@ public class GridManager : MonoBehaviour
         }
     }
 
-    IEnumerator FillHolesSlowly(float time)
+    void RemovePhysicsConstraint()
     {
+        List<int> columnsWithHoles = new List<int>();
+        List<int> rowToStartOn = new List<int>(); //first row above the hole
+        List<SpriteRenderer> spriteObjectsToDelete = new List<SpriteRenderer>();
+
+        for (int column = 0; column < gridDimension; column++)
+        {
+            for (int row = 0; row < gridDimension; row++)
+            {
+                SpriteRenderer currentSpriteRenderer = GetSpriteRendererAt(column, row);
+                if (currentSpriteRenderer.sprite == null)
+                {
+                    spriteObjectsToDelete.Add(currentSpriteRenderer);
+                    if (columnsWithHoles.Contains(column))
+                    {
+                        rowToStartOn[columnsWithHoles.IndexOf(column)] = row + 1;
+                    }
+                    else
+                    {
+                        columnsWithHoles.Add(column);
+                        rowToStartOn.Add(row + 1);
+                    }
+                }
+            }
+        }
+
+        // all columns that are not a part of the physics should be put into a layer where moving objects cannot collide with them
+        // furthermore, objects in a column should only collide with items in their column, so we'll set that as well.
+        HashSet<int> layerMasks = new HashSet<int>();
+        layerMasks.Add(UNCOLLIDABLE);
+        for (int column = 0; column < gridDimension; ++column)
+        {
+            for (int row = 0; row < gridDimension; ++row)
+            {
+                SpriteRenderer currentSpriteRenderer = GetSpriteRendererAt(column, row);
+                if (columnsWithHoles.Contains(column))
+                {
+                    currentSpriteRenderer.gameObject.layer = column + UNCOLLIDABLE + 1;
+                    layerMasks.Add(column + UNCOLLIDABLE + 1);
+                }
+            }
+        }
+        List<int> layerMasksList = layerMasks.ToList();
+        for (int x = 0; x < layerMasksList.Count; ++x)
+        {
+            for (int y = 0; y < layerMasksList.Count; ++y)
+            {
+                if (x != y)
+                {
+                    Debug.Log($"{layerMasksList[x]} will ignore collisions from {layerMasksList[y]}");
+                    Physics2D.IgnoreLayerCollision(layerMasksList[x], layerMasksList[y], true);
+                }
+            }
+        }
+
+        for (int x = 0; x< gridDimension; ++x)
+        {
+            for (int y = 0; y < gridDimension; ++y)
+            {
+                SpriteRenderer currentSpriteRenderer = GetSpriteRendererAt(x, y);
+            }
+        }
+
+        foreach (SpriteRenderer sr in spriteObjectsToDelete)
+        {
+            Destroy(sr.gameObject);
+        }
+
+        for (int x = 0; x < columnsWithHoles.Count; x++)
+        {
+            //unfreeze all items above the hole so they can be affected by physics
+            for (int row = rowToStartOn[x]; row < gridDimension; row++)
+            {
+                Rigidbody2D itemInColumnAboveHole = GetRigidBodyAt(columnsWithHoles[x], row);
+                itemInColumnAboveHole.constraints &= ~RigidbodyConstraints2D.FreezePositionY;
+            }
+        }
+    }
+
+    void FillHolesSlowly(float time)
+    {
+        Vector3 positionOffset = transform.position - new Vector3(gridDimension * distance / 2.0f, gridDimension * distance / 2.0f, 0);
         float elapsedTime = 0;
 
         List<int> columnsWithHoles = new List<int>();
-        List<int> rowToStartOn = new List<int>();
+        List<int> rowToStartOn = new List<int>(); //first row above the hole
         List<int> firstPositionOfHole = new List<int>();
 
         for (int column = 0; column < gridDimension; column++)
@@ -324,52 +412,57 @@ public class GridManager : MonoBehaviour
 
         //apply a force on all columns as needed, then elapse time until positions have reached the right place
         List<Rigidbody2D> topItems = new List<Rigidbody2D>();
-        List<Vector3> finalPosition = new List<Vector3>();
+        List<Rigidbody2D> lastItems = new List<Rigidbody2D>();
+        List<Vector2> finalPosition = new List<Vector2>();
         
         for (int x = 0; x < columnsWithHoles.Count; x++)
         {
-            /*for (int row = rowToStartOn[x]; row < gridDimension; row++)
+            //unfreeze all items above the hole so they can be affected by physics
+            for (int row = rowToStartOn[x]; row < gridDimension; row++)
             {
-                Vector2 tilePos = GetSpriteRendererAt(columnsWithHoles[x], row).transform.position;
-                GetSpriteRendererAt(columnsWithHoles[x], row).transform.position += (Vector3) Vector2.down * Time.deltaTime;
-            }*/
+                Rigidbody2D topItemInColumn = GetRigidBodyAt(columnsWithHoles[x], row);
+                topItemInColumn.constraints &= ~RigidbodyConstraints2D.FreezePositionY;
+            }
+
             int currentItemRow = rowToStartOn[x];
             if (currentItemRow < gridDimension)
             {
                 Rigidbody2D topItemInColumn = GetRigidBodyAt(columnsWithHoles[x], gridDimension - 1); //get the very top most item, not the first item above the hole
                 if (topItemInColumn != null)
                 {
+                    Debug.Log("Adding force...");
+                    finalPosition.Add(new Vector3(columnsWithHoles[x] * distance, firstPositionOfHole[x] * distance, 0) + positionOffset);
                     topItemInColumn.AddForce(Vector2.down * 10f, ForceMode2D.Impulse); // only apply a force if there are items above a hole, otherwise no movement in the column
                     topItems.Add(topItemInColumn);
-                    finalPosition.Add(GetSpriteRendererAt(columnsWithHoles[x], firstPositionOfHole[x]).transform.position);
+                    lastItems.Add(GetRigidBodyAt(columnsWithHoles[x], rowToStartOn[x]));
                 }
             }
         }
 
         while (elapsedTime < time)
         {
-            Debug.Log("Elapsed time: " + elapsedTime);
-            Debug.Log("TOP items: " + topItems.Count);
             for (int x = 0; x < topItems.Count; ++x)
             {
                 //stop movement if we reach the finalPosition
-                Debug.Log("X: " + x);
-                Debug.Log("Item pos: " + topItems[x].transform.position.y);
-                Debug.Log("Final pos: " + finalPosition[x].y);
-                if (topItems[x].transform.position.y <= finalPosition[x].y && topItems[x].velocity.y > 0)
+                //Debug.Log("X: " + x);
+                //Debug.Log("Item pos: " + topItems[x].transform.position.y);
+                //Debug.Log("Item velocity: " + topItems[x].velocity.y);
+                //Debug.Log("Final pos: " + finalPosition[x].y);
+                if (lastItems[x].transform.position.y <= finalPosition[x].y && topItems[x].velocity.y < 0)
                 {
+                    Debug.Log("WE DONE");
                     topItems[x].velocity = Vector2.zero;
-                    topItems[x].transform.position = finalPosition[x];
+                    lastItems[x].velocity = Vector2.zero;
+                    lastItems[x].transform.position = finalPosition[x];
                 }
             }
             elapsedTime += Time.deltaTime;
-            yield return null;
         }
 
         for (int column = 0; column < gridDimension; column++)
         {
             for (int row = 0; row < gridDimension; row++)
-            {
+            { 
                 while (GetSpriteRendererAt(column, row).sprite == null)
                 {
                     for (int filler = row; filler < gridDimension - 1; filler++)
