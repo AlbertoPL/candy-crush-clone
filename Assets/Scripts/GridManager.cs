@@ -1,14 +1,9 @@
 using System.Collections;
 using System.Collections.Generic;
 using TMPro;
-using Unity.Services.Analytics;
-using UnityEditor.Tilemaps;
-using UnityEditorInternal.VersionControl;
 using UnityEngine;
-using UnityEngine.UIElements;
 using Random = UnityEngine.Random;
 using System.Linq;
-using System;
 
 public class GridManager : MonoBehaviour
 {
