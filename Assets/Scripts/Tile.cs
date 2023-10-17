@@ -58,4 +58,10 @@ public class Tile : MonoBehaviour
         selected.Unselect();
         selected = null;
     }
+
+    // called when the cube hits the floor
+    void OnCollisionEnter2D(Collision2D col)
+    {
+        Debug.Log($"OnCollisionEnter2D: {position.x},{position.y}");
+    }
 }

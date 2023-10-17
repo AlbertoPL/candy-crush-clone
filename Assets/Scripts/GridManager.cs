@@ -6,7 +6,9 @@ using UnityEditor.Tilemaps;
 using UnityEditorInternal.VersionControl;
 using UnityEngine;
 using UnityEngine.UIElements;
+using Random = UnityEngine.Random;
 using System.Linq;
+using System;
 
 public class GridManager : MonoBehaviour
 {
@@ -18,6 +20,11 @@ public class GridManager : MonoBehaviour
     private GameObject[,] grid;
     public bool isInputDisabled;
     public bool isGameOver;
+    public bool isGridReleased;
+    public bool isComboing;
+    private HashSet<int> layerMasks;
+    private bool areTilesFalling;
+    private bool arePhysicsRemoved;
 
     public static GridManager Instance { get; private set; }
     void Awake() { 
@@ -66,13 +73,122 @@ public class GridManager : MonoBehaviour
     void Start()
     {
         grid = new GameObject[gridDimension, gridDimension];
+        layerMasks = new HashSet<int>
+        {
+            UNCOLLIDABLE
+        };
+        GameObject floor = GameObject.Find("InvisibleFloor");
+        Renderer floorRenderer = floor.GetComponent<Renderer>();
+        floorRenderer.enabled = false;
+        GameObject tileSpawner = GameObject.Find("TileSpawner");
+        tileSpawner.layer = UNCOLLIDABLE;
+        StopTileDrops();
+        arePhysicsRemoved = false;
+        isComboing = false;
         InitGrid();
+    }
+
+    bool AreTilesMoving()
+    {
+        Vector3 positionOffset = transform.position - new Vector3(gridDimension * distance / 2.0f, gridDimension * distance / 2.0f, 0);
+        bool isAnyTileMoving = false;
+        // check if all grid objects have finally stopped moving
+        for (int column = 0; column < gridDimension && !isAnyTileMoving; column++)
+        {
+            for (int row = 0; row < gridDimension; row++)
+            {
+                Rigidbody2D rb = GetRigidBodyAt(column, row);
+                if (rb != null && rb.velocity.magnitude > 0.01f)
+                {
+                    isAnyTileMoving = true;
+                    break;
+                }
+                else if (rb != null && Vector3.Distance(new Vector3(column * distance, row * distance, 0) + positionOffset, rb.transform.position) > 0.5f)
+                {
+                    isAnyTileMoving = true;
+                    break;
+                }
+            }
+        }
+        return isAnyTileMoving;
     }
 
     // Update is called once per frame
     void Update()
     {
+        if (isInputDisabled && isGridReleased /*&& !AreTilesMoving()*/ && !arePhysicsRemoved)
+        {
+            arePhysicsRemoved = true;
+            StartCoroutine(RemovePhysicsConstraint());
+        }
+        /*if (isInputDisabled && isGridReleased && arePhysicsRemoved)
+        {
+            Debug.Log("Still checking if tiles are falling");
+            bool isAnyTileMoving = AreTilesMoving();
+            
+            if (!isAnyTileMoving)
+            {
+                Debug.Log("Tiles have stopped falling");
+                areTilesFalling = false;
+            }
+        }*/
 
+        /*if (isInputDisabled)
+        {
+            //1. check if we need to generate tiles
+            //2. allow tiles to drop wait for tiles to fall into place (done by just allowing update function to keep being called)
+            //3. if we don't need to generate tiles and nothing is moving...
+            // 3a. restore physics constraints
+            // 3b. check matches
+            // 3c. if check matches returns false, then we are done. If numMoves <= 0 then game over. Otherwise isInputDisabled = false
+            // 3d. if check matches returns true, then play pop sound and call RemovePhysicsConstraint();
+
+            bool isAnyTileMoving = false;
+            // check if all grid objects have finally stopped moving
+            for (int column = 0; column < gridDimension && !isAnyTileMoving; column++)
+            {
+                for (int row = 0; row < gridDimension; row++)
+                {
+                    Rigidbody2D rb = GetRigidBodyAt(column, row);
+                    if (rb != null && rb.velocity.y < 0)
+                    {
+                        isAnyTileMoving = true;
+                        break;
+                    }
+                }
+            }
+
+            if (!isAnyTileMoving && !areTilesFalling)
+            {
+                Debug.Log("Tiles have finished moving");
+                FillHoles();
+                DropTiles();
+            }
+            else if (!isAnyTileMoving && areTilesFalling)
+            {
+                Debug.Log("Let's stop, tiles have fully dropped");
+                StopTileDrops();
+                RestorePhysicsConstraint();
+                bool changesOccur = CheckMatches();
+                if (!changesOccur)
+                {
+                    if (numMoves <= 0)
+                    {
+                        numMoves = 0;
+                        GameOver();
+                    }
+                    else
+                    {
+                        isInputDisabled = false;
+                    }
+                }
+                else
+                {
+                    SoundManager.Instance.PlaySound(SoundType.TypePop);
+                    RemovePhysicsConstraint();
+                }
+            }
+        }*/
     }
 
     void InitGrid()
@@ -116,7 +232,7 @@ public class GridManager : MonoBehaviour
     SpriteRenderer GetSpriteRendererAt(int column, int row)
     {
         if (column < 0 || column >= gridDimension
-             || row < 0 || row >= gridDimension)
+             || row < 0 || row >= gridDimension || grid[column, row] == null)
         {
             return null;
         }
@@ -128,7 +244,7 @@ public class GridManager : MonoBehaviour
     Rigidbody2D GetRigidBodyAt(int column, int row)
     {
         if (column < 0 || column >= gridDimension
-             || row < 0 || row >= gridDimension)
+             || row < 0 || row >= gridDimension || grid[column, row] == null)
         {
             return null;
         }
@@ -145,7 +261,7 @@ public class GridManager : MonoBehaviour
             return null;
         }
         GameObject tile = grid[column, row];
-        return tile.GetComponent<Tile>();
+        return tile != null ? tile.GetComponent<Tile>() : null;
     }
 
     public void SwapTiles(Vector2 tile1Position, Vector2 tile2Position)
@@ -184,7 +300,6 @@ public class GridManager : MonoBehaviour
             tile2.sprite = temp;
             tile1.transform.position = tile1Pos;
             tile2.transform.position = tile2Pos;
-            Debug.Log("Hey hey hey heeeey");
             bool changesOccur = CheckMatches();
             if (!changesOccur)
             {
@@ -199,7 +314,8 @@ public class GridManager : MonoBehaviour
             {
                 SoundManager.Instance.PlaySound(SoundType.TypePop);
                 numMoves--;
-                RemovePhysicsConstraint();
+                ReleaseGrid();
+                //RemovePhysicsConstraint();
                 /*FillHolesSlowly(2f);
                 do
                 {
@@ -214,7 +330,7 @@ public class GridManager : MonoBehaviour
         }
     }
 
-    bool CheckMatches()
+    /*bool CheckMatches()
     {
         HashSet<SpriteRenderer> matchedTiles = new HashSet<SpriteRenderer>();
         for (int row = 0; row < gridDimension; row++)
@@ -246,9 +362,50 @@ public class GridManager : MonoBehaviour
         }
         score += matchedTiles.Count;
         return matchedTiles.Count > 0;
+    }*/
+
+    bool CheckMatches()
+    {
+        HashSet<Tile> matchedTiles = new HashSet<Tile>();
+        for (int row = 0; row < gridDimension; row++)
+        {
+            for (int column = 0; column < gridDimension; column++)
+            {
+                Tile currentTile = GetTileAt(column, row);
+                SpriteRenderer currentSpriteRenderer = currentTile.GetComponent<SpriteRenderer>();
+
+                List<Tile> horizontalMatches = FindColumnMatchForTile(column, row, currentSpriteRenderer.sprite);
+                if (horizontalMatches.Count >= 2)
+                {
+                    matchedTiles.UnionWith(horizontalMatches);
+                    matchedTiles.Add(currentTile);
+                }
+
+                List<Tile> verticalMatches = FindRowMatchForTile(column, row, currentSpriteRenderer.sprite);
+
+                if (verticalMatches.Count >= 2)
+                {
+                    matchedTiles.UnionWith(verticalMatches);
+                    matchedTiles.Add(currentTile);
+                }
+            }
+        }
+
+        foreach (Tile tile in matchedTiles)
+        {
+            Destroy(tile.gameObject);
+        }
+        score += matchedTiles.Count;
+        return matchedTiles.Count > 0;
     }
 
-    List<SpriteRenderer> FindColumnMatchForTile(int col, int row, Sprite sprite)
+    void ReleaseGrid()
+    {
+        Debug.Log("Releasing grid...");
+        isGridReleased = true;
+    }
+
+    /*List<SpriteRenderer> FindColumnMatchForTile(int col, int row, Sprite sprite)
     {
         List<SpriteRenderer> result = new List<SpriteRenderer>();
         for (int i = col + 1; i < gridDimension; i++)
@@ -261,8 +418,22 @@ public class GridManager : MonoBehaviour
             result.Add(nextColumn);
         }
         return result;
+    }*/
+    List<Tile> FindColumnMatchForTile(int col, int row, Sprite sprite)
+    {
+        List<Tile> result = new List<Tile>();
+        for (int i = col + 1; i < gridDimension; i++)
+        {
+            Tile nextColumn = GetTileAt(i, row);
+            if (nextColumn.GetComponent<SpriteRenderer>().sprite != sprite)
+            {
+                break;
+            }
+            result.Add(nextColumn);
+        }
+        return result;
     }
-    List<SpriteRenderer> FindRowMatchForTile(int col, int row, Sprite sprite)
+    /*List<SpriteRenderer> FindRowMatchForTile(int col, int row, Sprite sprite)
     {
         List<SpriteRenderer> result = new List<SpriteRenderer>();
         for (int i = row + 1; i < gridDimension; i++)
@@ -275,8 +446,24 @@ public class GridManager : MonoBehaviour
             result.Add(nextRow);
         }
         return result;
+    }*/
+
+    List<Tile> FindRowMatchForTile(int col, int row, Sprite sprite)
+    {
+        List<Tile> result = new List<Tile>();
+        for (int i = row + 1; i < gridDimension; i++)
+        {
+            Tile nextRow = GetTileAt(col, i);
+            if (nextRow.GetComponent<SpriteRenderer>().sprite != sprite)
+            {
+                break;
+            }
+            result.Add(nextRow);
+        }
+        return result;
     }
-    void FillHoles()
+
+    /*void FillHoles()
     {
         for (int column = 0; column < gridDimension; column++)
         {
@@ -299,22 +486,158 @@ public class GridManager : MonoBehaviour
                 }
             }
         }
+    }*/
+
+    //spawns a new tile at the tile spawner. The tile is unfrozen in the y direction and has the same layer as items in its column so that there's no collision side to side
+    GameObject SpawnNewTile(int column, int row, int spawnPos)
+    {
+        Debug.Log($"Spawning new tile at {column}, {row}");
+        Vector3 positionOffset = transform.position - new Vector3(gridDimension * distance / 2.0f, 0, 0);
+        GameObject tileSpawner = GameObject.Find("TileSpawner");
+
+        GameObject newTile = Instantiate(tilePrefab);
+        newTile.layer = UNCOLLIDABLE + column + 1;
+        SpriteRenderer renderer = newTile.GetComponent<SpriteRenderer>();
+        Rigidbody2D rb = newTile.GetComponent<Rigidbody2D>();
+        rb.constraints &= ~RigidbodyConstraints2D.FreezePositionY;
+        Debug.Log($"RB constraints: {rb.constraints}");
+        renderer.sprite = sprites[Random.Range(0, sprites.Count)];
+        Tile tile = newTile.AddComponent<Tile>();
+        tile.position = new Vector2(column, row);
+        newTile.transform.parent = transform;
+        newTile.transform.position = new Vector3(column * distance, (spawnPos + 1) * distance + tileSpawner.transform.position.y + renderer.bounds.size.y, 0) + positionOffset;
+        return newTile;
     }
 
-    void RemovePhysicsConstraint()
+    void FillHoles()
     {
+        Debug.Log("Filling holes...");
+        for (int column = 0; column < gridDimension; column++)
+        {
+            int holeCount = 0;
+            for (int row = 0; row < gridDimension; row++)
+            {
+                if (GetTileAt(column, row) == null)
+                {
+                    holeCount++;
+                }
+                else if (holeCount > 0)
+                {
+                    grid[column, row - holeCount] = grid[column, row];
+                    grid[column, row - holeCount].GetComponent<Tile>().position = new Vector2(column, row - holeCount);
+                }
+            }
+
+            for (int x = 0; x < holeCount; ++x)
+            {
+                grid[column, gridDimension - holeCount + x] = SpawnNewTile(column, gridDimension - holeCount + x, x); //we use x because we want to spawn items from the same starting spot regardless
+            }
+        }
+
+
+                /*for (int column = 0; column < gridDimension; column++)
+        {
+            bool canFindTileAbove = true;
+            for (int row = 0; row < gridDimension; row++)
+            {
+                if (canFindTileAbove && GetSpriteRendererAt(column, row) == null) 
+                {
+                    bool foundTileAbove = false;
+                    //swap tiles if we can
+                    for (int x = row + 1; x < gridDimension && canFindTileAbove; x++)
+                    {
+                        SpriteRenderer currSpriteRenderer = GetSpriteRendererAt(column, x);
+                        //We found a non-empty tile above, so let's swap it into the spot that's null and bail out
+                        if (currSpriteRenderer != null)
+                        {
+                            grid[column, row] = GenerateNewTileFromExisting(column, row, currSpriteRenderer);
+                            grid[column, x] = null;
+                            foundTileAbove = true;
+                            break;
+                        }
+                    }
+                    canFindTileAbove = !foundTileAbove;
+                }
+
+                //no more tiles to swap, we need to just generate all the remaining missing tiles
+                if (!canFindTileAbove)
+                {
+                    grid[column, row] = GenerateNewTileFromExisting(column, row, null);
+                }
+            }
+        }*/
+    }
+
+    void RestorePhysicsConstraint() {
+        Debug.Log("Restoring physics constraints...");
+        List<int> layerMasksList = layerMasks.ToList();
+        for (int x = 0; x < layerMasksList.Count; ++x)
+        {
+            for (int y = 0; y < layerMasksList.Count; ++y)
+            {
+                if (x != y)
+                {
+                    Physics2D.IgnoreLayerCollision(layerMasksList[x], layerMasksList[y], false);
+                }
+            }
+        }
+
+        for (int column = 0; column < gridDimension; ++column)
+        {
+            for (int row = 0; row < gridDimension; ++row)
+            {
+                SpriteRenderer currentSpriteRenderer = GetSpriteRendererAt(column, row);
+                Rigidbody2D currentRigidBody = GetRigidBodyAt(column, row);
+                currentRigidBody.constraints = RigidbodyConstraints2D.FreezeAll;
+                currentSpriteRenderer.gameObject.layer = UNCOLLIDABLE;
+            }
+        }
+        Debug.Log("Grid locked");
+        isGridReleased = false;
+    }
+
+    void DropTiles()
+    {
+        Physics2D.IgnoreLayerCollision(UNCOLLIDABLE, 31, true);
+        Physics2D.IgnoreLayerCollision(UNCOLLIDABLE + 1, 31, true);
+        Physics2D.IgnoreLayerCollision(UNCOLLIDABLE + 2, 31, true);
+        Physics2D.IgnoreLayerCollision(UNCOLLIDABLE + 3, 31, true);
+        Physics2D.IgnoreLayerCollision(UNCOLLIDABLE + 4, 31, true);
+        Physics2D.IgnoreLayerCollision(UNCOLLIDABLE + 5, 31, true);
+        Physics2D.IgnoreLayerCollision(UNCOLLIDABLE + 6, 31, true);
+        Physics2D.IgnoreLayerCollision(UNCOLLIDABLE + 7, 31, true);
+        Physics2D.IgnoreLayerCollision(UNCOLLIDABLE + 8, 31, true);
+        areTilesFalling = true;
+    }
+
+    void StopTileDrops()
+    {
+        Physics2D.IgnoreLayerCollision(UNCOLLIDABLE, 31, false);
+        Physics2D.IgnoreLayerCollision(UNCOLLIDABLE + 1, 31, false);
+        Physics2D.IgnoreLayerCollision(UNCOLLIDABLE + 2, 31, false);
+        Physics2D.IgnoreLayerCollision(UNCOLLIDABLE + 3, 31, false);
+        Physics2D.IgnoreLayerCollision(UNCOLLIDABLE + 4, 31, false);
+        Physics2D.IgnoreLayerCollision(UNCOLLIDABLE + 5, 31, false);
+        Physics2D.IgnoreLayerCollision(UNCOLLIDABLE + 6, 31, false);
+        Physics2D.IgnoreLayerCollision(UNCOLLIDABLE + 7, 31, false);
+        Physics2D.IgnoreLayerCollision(UNCOLLIDABLE + 8, 31, false);
+        areTilesFalling = false;
+    }
+
+    IEnumerator RemovePhysicsConstraint()
+    {
+        Debug.Log("Removing physics constraints...");
+        isComboing = true;
         List<int> columnsWithHoles = new List<int>();
         List<int> rowToStartOn = new List<int>(); //first row above the hole
-        List<SpriteRenderer> spriteObjectsToDelete = new List<SpriteRenderer>();
 
         for (int column = 0; column < gridDimension; column++)
         {
             for (int row = 0; row < gridDimension; row++)
             {
-                SpriteRenderer currentSpriteRenderer = GetSpriteRendererAt(column, row);
-                if (currentSpriteRenderer.sprite == null)
+                Tile currentTile = GetTileAt(column, row);
+                if (currentTile == null)
                 {
-                    spriteObjectsToDelete.Add(currentSpriteRenderer);
                     if (columnsWithHoles.Contains(column))
                     {
                         rowToStartOn[columnsWithHoles.IndexOf(column)] = row + 1;
@@ -330,16 +653,14 @@ public class GridManager : MonoBehaviour
 
         // all columns that are not a part of the physics should be put into a layer where moving objects cannot collide with them
         // furthermore, objects in a column should only collide with items in their column, so we'll set that as well.
-        HashSet<int> layerMasks = new HashSet<int>();
-        layerMasks.Add(UNCOLLIDABLE);
         for (int column = 0; column < gridDimension; ++column)
         {
             for (int row = 0; row < gridDimension; ++row)
             {
-                SpriteRenderer currentSpriteRenderer = GetSpriteRendererAt(column, row);
-                if (columnsWithHoles.Contains(column))
+                Tile currentTile = GetTileAt(column, row);
+                if (currentTile != null && columnsWithHoles.Contains(column))
                 {
-                    currentSpriteRenderer.gameObject.layer = column + UNCOLLIDABLE + 1;
+                    currentTile.gameObject.layer = column + UNCOLLIDABLE + 1;
                     layerMasks.Add(column + UNCOLLIDABLE + 1);
                 }
             }
@@ -351,24 +672,15 @@ public class GridManager : MonoBehaviour
             {
                 if (x != y)
                 {
-                    Debug.Log($"{layerMasksList[x]} will ignore collisions from {layerMasksList[y]}");
                     Physics2D.IgnoreLayerCollision(layerMasksList[x], layerMasksList[y], true);
                 }
             }
         }
 
-        for (int x = 0; x< gridDimension; ++x)
-        {
-            for (int y = 0; y < gridDimension; ++y)
-            {
-                SpriteRenderer currentSpriteRenderer = GetSpriteRendererAt(x, y);
-            }
-        }
-
-        foreach (SpriteRenderer sr in spriteObjectsToDelete)
+        /*foreach (SpriteRenderer sr in spriteObjectsToDelete)
         {
             Destroy(sr.gameObject);
-        }
+        }*/
 
         for (int x = 0; x < columnsWithHoles.Count; x++)
         {
@@ -379,6 +691,55 @@ public class GridManager : MonoBehaviour
                 itemInColumnAboveHole.constraints &= ~RigidbodyConstraints2D.FreezePositionY;
             }
         }
+
+        //first grid tiles drop
+
+        /*yield return new WaitForFixedUpdate();
+        yield return new WaitUntil(() => AreTilesMoving() == true);
+        //areTilesFalling = true;
+        
+        */
+        yield return new WaitUntil(() => AreTilesMoving() == false);
+        //then we fill in the holes and allow new tiles to drop
+        FillHoles();
+
+        /*yield return new WaitForFixedUpdate();
+        yield return new WaitUntil(() => AreTilesMoving() == true);*/
+        Debug.Log("Tiles started to move again");
+        Debug.Log(string.Format("Here's the list: ({0}).", string.Join(", ", layerMasksList)));
+
+        //areTilesFalling = true;
+        yield return new WaitUntil(() => AreTilesMoving() == true);
+        yield return new WaitUntil(() => AreTilesMoving() == false);
+        //areTilesFalling = false;
+        //now we restore the grid
+        RestorePhysicsConstraint();
+
+        //Combo checking!
+        bool changesOccur = CheckMatches();
+        if (!changesOccur)
+        {
+            Debug.Log("No more changes");
+            if (numMoves <= 0)
+            {
+                Debug.Log("Game over man");
+                numMoves = 0;
+                GameOver();
+            }
+            else
+            {
+                Debug.Log("Input restored");
+                isInputDisabled = false;
+            }
+        }
+        else
+        {
+            Debug.Log("More changes!");
+            SoundManager.Instance.PlaySound(SoundType.TypePop);
+            ReleaseGrid();
+        }
+        arePhysicsRemoved = false;
+        isComboing = false;
     }
 
     void FillHolesSlowly(float time)
