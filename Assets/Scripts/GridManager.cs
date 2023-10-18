@@ -267,15 +267,17 @@ public class GridManager : MonoBehaviour
         GameObject tile2 = grid[(int) tile2Position.x, (int) tile2Position.y];
         SpriteRenderer renderer2 = tile2.GetComponent<SpriteRenderer>();
 
-        StartCoroutine(SmoothTileSwap(renderer1, renderer2, 0.5f));
+        StartCoroutine(SmoothTileSwap(renderer1, renderer2, tile1, tile2, 0.5f));
     }
 
-    private IEnumerator SmoothTileSwap(SpriteRenderer tile1, SpriteRenderer tile2, float time)
+    private IEnumerator SmoothTileSwap(SpriteRenderer tile1, SpriteRenderer tile2, GameObject tile1Go, GameObject tile2Go, float time)
     {
         Debug.Log("Smooth tile swap running");
         isInputDisabled = true;
         Vector2 tile1Pos = tile1.transform.position;
         Vector2 tile2Pos = tile2.transform.position;
+        int tile1Layer = tile1Go.layer;
+        int tile2Layer = tile2Go.layer;
         SoundManager.Instance.PlaySound(SoundType.TypeMove);
 
         float elapsedTime = 0;
@@ -307,6 +309,8 @@ public class GridManager : MonoBehaviour
             }
             else
             {
+                tile1Go.layer = tile2Layer;
+                tile2Go.layer = tile1Layer;
                 SoundManager.Instance.PlaySound(SoundType.TypePop);
                 numMoves--;
                 ReleaseGrid();
